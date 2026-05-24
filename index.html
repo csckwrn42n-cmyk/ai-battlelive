@@ -198,12 +198,88 @@
         return result;
     }
 
+    function renderScript(script, isSample = false) {
+        if (script.world_event) {
+            document.getElementById('worldEvent').innerText = script.world_event;
+            appendHistoryItems([`🌍 全局大事件：${script.world_event}`]);
+        }
+
+        const chars = script.characters;
+        if (!chars) return;
+
+        let currentLogs = [];
+        for (let id in chars) {
+            if (!players[id]) continue;
+            let p = players[id];
+            let data = applyCommandOverride(chars[id], id);
+            let previousHp = p.hp;
+
+            if (data.hp_change !== undefined) {
+                p.hp = Math.max(0, p.hp + data.hp_change);
+            }
+            if (data.new_weapon && data.new_weapon !== '无' && data.new_weapon !== '不变') {
+                p.weapon = data.new_weapon;
+            }
+            if (data.dialogue && data.dialogue !== '...') {
+                p.bubble = data.dialogue;
+                p.bTime = 120;
+            }
+            if (p.hp <= 0 || data.action === 'dead') {
+                p.hp = 0;
+            } else if (data.action === 'attack') {
+                let targets = [];
+                if (data.target && players[data.target] && players[data.target].hp > 0 && data.target !== id) {
+                    targets = [players[data.target]];
+                } else {
+                    targets = Object.values(players).filter(x => x.id !== id && x.hp > 0);
+                }
+                if (targets.length > 0) {
+                    let t = targets[Math.floor(Math.random() * targets.length)];
+                    p.targetX = t.x; p.targetY = t.y;
+                    createParticles(t.x, t.y, p.color);
+                }
+            } else if (['hide', 'scavenge', 'run', 'defend'].includes(data.action)) {
+                p.targetX = Math.random() * 400 + 50;
+                p.targetY = Math.random() * 260 + 50;
+            }
+
+            currentLogs.push(buildSingleLogEntry(id, p, data));
+        }
+
+        if (script.battle_log && Array.isArray(script.battle_log)) {
+            appendHistoryItems(script.battle_log.map(line => `🧾 ${line}`));
+        } else {
+            appendHistoryItems(currentLogs);
+        }
+
+        updateSidebarUI();
+
+        const alive = Object.values(players).filter(p => p.hp > 0);
+        if (alive.length <= 1) {
+            const winnerName = alive.length === 1 ? `${alive[0].id} ${alive[0].name}` : '无人幸存';
+            renderWinner(winnerName);
+            stopPolling();
+            if (!script.game_over) {
+                appendHistoryItems(['⚠️ 检测到决赛结果，但后端未标记 game_over，已停止轮询。']);
+            }
+        }
+    }
+
     async function fetchLatestScript() {
         try {
             const scriptUrl = new URL('game_script.json', window.location.href);
-            const response = await fetch(`${scriptUrl.href}?nocache=${Math.random()}`, { cache: 'no-store' });
+            let response = await fetch(`${scriptUrl.href}?nocache=${Math.random()}`, { cache: 'no-store' });
 
             if (!response.ok) {
+                const sampleUrl = new URL('game_script.sample.json', window.location.href);
+                const sampleResponse = await fetch(`${sampleUrl.href}?nocache=${Math.random()}`, { cache: 'no-store' });
+                if (sampleResponse.ok) {
+                    document.getElementById('debugError').innerText = '⚠️ 未找到后端实时数据，已加载静态示例剧本。';
+                    const script = await sampleResponse.json();
+                    renderScript(script, true);
+                    return;
+                }
+
                 const hint = window.location.protocol === 'file:'
                     ? '请使用本地服务器打开页面，例如：python3 -m http.server'
                     : '请确认服务器在正确目录下运行';
@@ -213,71 +289,7 @@
 
             const script = await response.json();
             document.getElementById('debugError').innerText = '✅ 卫星信号稳定，剧本同步中...';
-
-            if (script.world_event) {
-                document.getElementById('worldEvent').innerText = script.world_event;
-                appendHistoryItems([`🌍 全局大事件：${script.world_event}`]);
-            }
-
-            const chars = script.characters;
-            if (!chars) return;
-
-            let currentLogs = [];
-            for (let id in chars) {
-                if (!players[id]) continue;
-                let p = players[id];
-                let data = applyCommandOverride(chars[id], id);
-                let previousHp = p.hp;
-
-                if (data.hp_change !== undefined) {
-                    p.hp = Math.max(0, p.hp + data.hp_change);
-                }
-                if (data.new_weapon && data.new_weapon !== '无' && data.new_weapon !== '不变') {
-                    p.weapon = data.new_weapon;
-                }
-                if (data.dialogue && data.dialogue !== '...') {
-                    p.bubble = data.dialogue;
-                    p.bTime = 120;
-                }
-                if (p.hp <= 0 || data.action === 'dead') {
-                    p.hp = 0;
-                } else if (data.action === 'attack') {
-                    let targets = [];
-                    if (data.target && players[data.target] && players[data.target].hp > 0 && data.target !== id) {
-                        targets = [players[data.target]];
-                    } else {
-                        targets = Object.values(players).filter(x => x.id !== id && x.hp > 0);
-                    }
-                    if (targets.length > 0) {
-                        let t = targets[Math.floor(Math.random() * targets.length)];
-                        p.targetX = t.x; p.targetY = t.y;
-                        createParticles(t.x, t.y, p.color);
-                    }
-                } else if (['hide', 'scavenge', 'run', 'defend'].includes(data.action)) {
-                    p.targetX = Math.random() * 400 + 50;
-                    p.targetY = Math.random() * 260 + 50;
-                }
-
-                currentLogs.push(buildSingleLogEntry(id, p, data));
-            }
-
-            if (script.battle_log && Array.isArray(script.battle_log)) {
-                appendHistoryItems(script.battle_log.map(line => `🧾 ${line}`));
-            } else {
-                appendHistoryItems(currentLogs);
-            }
-
-            updateSidebarUI();
-
-            const alive = Object.values(players).filter(p => p.hp > 0);
-            if (alive.length <= 1) {
-                const winnerName = alive.length === 1 ? `${alive[0].id} ${alive[0].name}` : '无人幸存';
-                renderWinner(winnerName);
-                stopPolling();
-                if (!script.game_over) {
-                    appendHistoryItems(['⚠️ 检测到决赛结果，但后端未标记 game_over，已停止轮询。']);
-                }
-            }
+            renderScript(script, false);
         } catch (e) {
             let message = e.message || String(e);
             if (window.location.protocol === 'file:') {
