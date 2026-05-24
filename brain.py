@@ -156,6 +156,8 @@ def apply_script(script):
     for rid, cmd in commands.items():
         if rid in chars:
             chars[rid]['action'] = cmd.get('action', chars[rid].get('action'))
+            if 'target' in cmd and cmd.get('target'):
+                chars[rid]['target'] = cmd.get('target')
             if 'dialogue' in cmd:
                 chars[rid]['dialogue'] = cmd.get('dialogue')
     save_commands({})

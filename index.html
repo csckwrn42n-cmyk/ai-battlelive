@@ -130,11 +130,31 @@
             errorBox.innerText = '请输入合法指令：角色ID 动作 [目标]';
             return;
         }
+        // 记录到前端 pendingCommands（立即视觉反馈）
         pendingCommands[parsed.roleId] = parsed;
         appendHistoryItems([`🎤 用户指令：${parsed.roleId} ${parsed.action}${parsed.target ? ' ' + parsed.target : ''}`]);
         renderPendingCommands();
         document.getElementById('commandInput').value = '';
-        errorBox.innerText = '✅ 已记录用户指令，本轮将优先执行';
+        errorBox.innerText = '✅ 指令已发送，本轮将优先执行';
+        // 发送到后端 /command 端点
+        fetch('/command', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                role: parsed.roleId,
+                action: parsed.action,
+                target: parsed.target || '',
+                dialogue: parsed.dialogue || ''
+            })
+        }).then(r => {
+            if (r.ok) {
+                errorBox.innerText = '✅ 指令已发送到后端，本轮将优先执行';
+            } else {
+                errorBox.innerText = '⚠️ 指令已记录在前端，但后端可能未运行';
+            }
+        }).catch(() => {
+            errorBox.innerText = '⚠️ 指令已记录在前端（后端未连接/未运行）';
+        });
     }
 
     function applyCommandOverride(data, id) {
