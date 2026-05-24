@@ -164,11 +164,35 @@ def apply_script(script):
     # 优先应用用户命令
     for rid, cmd in commands.items():
         if rid in chars:
+            was_overridden = False
             chars[rid]['action'] = cmd.get('action', chars[rid].get('action'))
             if 'target' in cmd and cmd.get('target'):
                 chars[rid]['target'] = cmd.get('target')
+                was_overridden = True
             if 'dialogue' in cmd:
                 chars[rid]['dialogue'] = cmd.get('dialogue')
+                was_overridden = True
+            # 如果用户指令是 attack 且有目标，自动计算伤害
+            if cmd.get('action') == 'attack' and cmd.get('target'):
+                target = cmd['target']
+                if target in players and players[target]['hp'] > 0:
+                    # 根据攻击者武器计算伤害
+                    weapon_damage = {
+                        '拳头': 8, '铁管': 12, '木棍': 10, '钢管': 14, '小刀': 15,
+                        '霰弹枪': 25, '手枪': 18, '步枪': 22, '冲锋枪': 20,
+                        '砍刀': 18, '平底锅': 10, '木盾': 5
+                    }
+                    atk_weapon = players[rid].get('weapon', '拳头')
+                    base_damage = weapon_damage.get(atk_weapon, 8)
+                    damage = random.randint(int(base_damage * 0.7), int(base_damage * 1.3))
+                    # 将伤害写入目标的 hp_change
+                    existing_hp = players[target]['hp']
+                    if target in chars:
+                        current_change = chars[target].get('hp_change', 0)
+                        chars[target]['hp_change'] = current_change - damage
+                    # 同时确保攻击者没有异常扣血
+                    if rid in chars and chars[rid].get('hp_change', 0) == 0:
+                        chars[rid]['hp_change'] = 0
     save_commands({})
     
     # 更新血量、武器

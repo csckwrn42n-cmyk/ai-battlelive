@@ -99,6 +99,7 @@
     let actionHistory = [];
     let pendingCommands = {};
     let pollHandle = null;
+    let lastScriptSig = '';  // 去重：记录上一帧剧本签名
 
     // 中文动作 → 英文动作映射
     const ACTION_MAP = {
@@ -200,8 +201,11 @@
 
     function appendHistoryItems(lines) {
         if (!lines || lines.length === 0) return;
-        actionHistory = actionHistory.concat(lines.filter(Boolean));
-        if (actionHistory.length > 30) actionHistory = actionHistory.slice(-30);
+        // 去重：过滤掉与最后一条历史完全相同的行
+        const newLines = lines.filter(Boolean).filter(l => l !== actionHistory[actionHistory.length - 1]);
+        if (newLines.length === 0) return;
+        actionHistory = actionHistory.concat(newLines);
+        if (actionHistory.length > 50) actionHistory = actionHistory.slice(-50);
         document.getElementById('actionLog').innerHTML = actionHistory
             .map(line => `<div class="history-item">${line}</div>`)
             .join('');
@@ -245,6 +249,25 @@
     }
 
     function renderScript(script, isSample = false) {
+        // 去重：如果剧本内容没变（同一轮），跳过日志追加
+        const sig = JSON.stringify(script);
+        if (sig === lastScriptSig) {
+            // 只更新血量/状态，不追加日志
+            if (script.characters) {
+                for (let id in script.characters) {
+                    if (!players[id]) continue;
+                    let p = players[id];
+                    let data = script.characters[id];
+                    if (data.hp_change !== undefined) {
+                        p.hp = Math.max(0, p.hp + data.hp_change);
+                    }
+                }
+                updateSidebarUI();
+            }
+            return;
+        }
+        lastScriptSig = sig;
+
         if (script.world_event) {
             document.getElementById('worldEvent').innerText = script.world_event;
             appendHistoryItems([`🌍 全局大事件：${script.world_event}`]);

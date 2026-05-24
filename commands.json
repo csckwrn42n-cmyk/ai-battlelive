@@ -1,0 +1,8 @@
+{
+  "A": {
+    "role": "A",
+    "action": "attack",
+    "target": "B",
+    "dialogue": ""
+  }
+}
