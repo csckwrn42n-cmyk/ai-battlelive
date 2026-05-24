@@ -8,10 +8,19 @@ from urllib.parse import urlparse, parse_qs
 from openai import OpenAI
 
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
-if not DEEPSEEK_API_KEY:
-    raise SystemExit("请设置环境变量 DEEPSEEK_API_KEY")
 
-client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
+client = None
+if DEEPSEEK_API_KEY:
+    try:
+        client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
+        print("✅ DeepSeek 客户端已初始化")
+    except Exception:
+        client = None
+
+if not client:
+    print("⚠️ 未设置 DEEPSEEK_API_KEY，可通过浏览器 /set_api_key 动态注入")
+    print("   或设置环境变量后重启")
+    # 不退出，允许 HTTP 服务器启动等待用户注入 key
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 COMMANDS_PATH = os.path.join(CURRENT_DIR, "commands.json")

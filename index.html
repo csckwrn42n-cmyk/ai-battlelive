@@ -77,7 +77,7 @@
             <input id="commandInput" class="command-input" placeholder="示例：A attack D 或 B hide" autocomplete="off" />
             <button id="sendCommandBtn" class="command-button" type="button">发送</button>
         </div>
-        <div class="command-hint">输入后该角色本轮动作会优先覆盖 DS 生成指令。格式：角色ID 动作 [目标]</div>
+        <div class="command-hint">格式：角色ID+动作+[目标]，如「A attack D」「A 打 B」「C躲」中英文都支持</div>
         <div class="log-title">当前待执行指令</div>
         <div class="pending-commands" id="pendingCommands">暂无待执行指令</div>
     </div>
@@ -100,16 +100,42 @@
     let pendingCommands = {};
     let pollHandle = null;
 
+    // 中文动作 → 英文动作映射
+    const ACTION_MAP = {
+        '打': 'attack', '攻击': 'attack', '攻': 'attack', 'atk': 'attack',
+        '搜': 'scavenge', '搜索': 'scavenge', '搜刮': 'scavenge', '捡': 'scavenge', '找': 'scavenge',
+        '躲': 'hide', '藏': 'hide', '隐藏': 'hide',
+        '跑': 'run', '逃': 'run', '逃跑': 'run', '撤': 'run',
+        '守': 'defend', '防': 'defend', '防御': 'defend',
+        '停': 'none', '无': 'none', '不': 'none'
+    };
+
     function parseUserCommand(raw) {
         const txt = raw.trim();
         if (!txt) return null;
-        const match = txt.match(/^([A-E])\s+([a-zA-Z_]+)(?:\s+([A-E]))?$/i);
-        if (!match) return null;
-        const roleId = match[1].toUpperCase();
-        const action = match[2].toLowerCase();
-        const target = match[3] ? match[3].toUpperCase() : null;
+        // 支持格式: "A 打 B" (有空格) 或 "A打B" (无空格)
+        let match = txt.match(/^([A-Ea-e])\s+([^\s]+)\s*([A-Ea-e])?$/);
+        let roleId, action, target;
+        if (match) {
+            roleId = match[1].toUpperCase();
+            action = match[2].toLowerCase();
+            target = match[3] ? match[3].toUpperCase() : null;
+        } else {
+            // 无空格紧凑格式: "A打B"
+            match = txt.match(/^([A-Ea-e])([^A-Ea-e]+)([A-Ea-e])?$/);
+            if (!match) return null;
+            roleId = match[1].toUpperCase();
+            action = match[2].trim().toLowerCase();
+            target = match[3] ? match[3].toUpperCase() : null;
+        }
+        // 中文 → 英文映射
+        const mappedAction = ACTION_MAP[action];
         const allowed = ['attack', 'scavenge', 'hide', 'run', 'defend', 'none'];
-        if (!allowed.includes(action)) return null;
+        if (mappedAction) {
+            action = mappedAction;
+        } else if (!allowed.includes(action)) {
+            return null;
+        }
         return { roleId, action, target };
     }
 
