@@ -1,5 +1,9 @@
 import os
 import time
+import threading
+import http.server
+import socketserver
+from urllib.parse import urlparse, parse_qs
 import random
 import json
 from openai import OpenAI
@@ -16,6 +20,82 @@ if not DEEPSEEK_API_KEY:
 
 # 初始化 DeepSeek 客户端（注意不要在日志中打印 API Key）
 client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
+
+# 本地命令文件（由前端通过 HTTP POST 写入，后端轮询并消费）
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+COMMANDS_PATH = os.path.join(CURRENT_DIR, "commands.json")
+
+def load_commands():
+    try:
+        if not os.path.exists(COMMANDS_PATH):
+            return {}
+        with open(COMMANDS_PATH, 'r', encoding='utf-8') as f:
+            return json.load(f) or {}
+    except Exception:
+        return {}
+
+def save_commands(d):
+    tmp = COMMANDS_PATH + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(d, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, COMMANDS_PATH)
+
+
+class CommandHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
+    def _set_json_headers(self, code=200):
+        self.send_response(code)
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.end_headers()
+
+    def do_GET(self):
+        if self.path.startswith('/commands'):
+            cmds = load_commands()
+            self._set_json_headers(200)
+            self.wfile.write(json.dumps(cmds, ensure_ascii=False).encode('utf-8'))
+        else:
+            self.send_response(404); self.end_headers()
+
+    def do_POST(self):
+        if self.path.startswith('/command'):
+            length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(length).decode('utf-8')
+            try:
+                payload = json.loads(body)
+            except Exception:
+                self._set_json_headers(400)
+                self.wfile.write(json.dumps({'error': 'invalid json'}).encode('utf-8'))
+                return
+
+            # 期望格式: {"role":"A","action":"attack","target":"B","dialogue":"..."}
+            role = payload.get('role')
+            if not role:
+                self._set_json_headers(400)
+                self.wfile.write(json.dumps({'error': 'missing role'}).encode('utf-8'))
+                return
+            cmds = load_commands()
+            cmds[role] = payload
+            save_commands(cmds)
+            self._set_json_headers(200)
+            self.wfile.write(json.dumps({'ok': True}).encode('utf-8'))
+        else:
+            self.send_response(404); self.end_headers()
+
+    def log_message(self, format, *args):
+        # 降低默认日志噪声
+        return
+
+
+def start_command_server(port=9001):
+    try:
+        server = socketserver.ThreadingTCPServer(('127.0.0.1', port), CommandHTTPRequestHandler)
+    except Exception as e:
+        print(f"⚠️ 无法启动命令服务器 (127.0.0.1:{port})：{e}")
+        return None
+
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    print(f"🔌 命令服务器已启动： http://127.0.0.1:{port}/command (POST) /commands (GET)")
+    return server
 
 # 5个小人的 MBTI 初始状态
 players_status = {
@@ -97,6 +177,8 @@ def ask_deepseek_for_story(danmu_list):
 def main_loop():
     print("🚀 AI废土大逃杀『大脑核心』已启动！")
     round_count = 1
+    # 启动本地命令 HTTP 服务，供前端发送实时指令
+    cmd_server = start_command_server(port=9001)
     
     while True:
         print(f"\n================ 🌀 第 {round_count} 回合 ================")
@@ -116,6 +198,23 @@ def main_loop():
             
             # 3. 根据 DeepSeek 的指示，更新我们本地的玩家血量和状态
             chars = script.get("characters", {})
+            # 若存在 commands.json，则把用户指令作为优先覆盖项应用到剧本
+            commands = load_commands()
+            if commands:
+                # commands 格式: { "A": {"role":"A","action":"attack","target":"B"}, ... }
+                for r, cmd in commands.items():
+                    if r in chars:
+                        print(f"🔁 应用用户指令覆盖角色 {r}: {cmd}")
+                        chars[r]['action'] = cmd.get('action', chars[r].get('action'))
+                        if 'target' in cmd:
+                            chars[r]['target'] = cmd.get('target')
+                        if 'dialogue' in cmd:
+                            chars[r]['dialogue'] = cmd.get('dialogue')
+                # 清空命令文件（命令已被消费）
+                try:
+                    save_commands({})
+                except Exception:
+                    pass
             for name, p_info in chars.items():
                 if name in players_status:
                     # 更新血量

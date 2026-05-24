@@ -47,5 +47,20 @@ git push -u origin main
 把密钥放到 GitHub Secrets（如果你使用 GitHub Actions）
 - 打开仓库设置 -> Secrets -> Actions -> New repository secret，名称使用 `DEEPSEEK_API_KEY`。
 
-可选：让后端读取来自远程的指令（进阶）
-- 如果你想让前端输入的指令也同步到后端，需要为 `brain.py` 添加一个小的本地 HTTP 接口或轮询一个 `commands.json` 文件。告诉我是否需要，我会继续帮你实现。
+已实现：本仓库已提供一个本地命令接口，后端会在每回合生成后优先合并这些指令再写入 `game_script.json`。
+
+- 启动 `brain.py` 后会同时监听本地端口 `9001`。
+- 发送指令示例（POST 到 `/command`）：
+
+```bash
+curl -X POST http://127.0.0.1:9001/command -H "Content-Type: application/json" \
+	-d '{"role":"A","action":"attack","target":"B"}'
+```
+
+- 查看当前未消费指令（GET `/commands`）：
+
+```bash
+curl http://127.0.0.1:9001/commands
+```
+
+行为说明：后端会把命令当作优先项合并到 DeepSeek 生成的 `characters` 字段上，并在合并后清空命令存储（一次性消费）。前端已有的即时覆盖机制仍然保留用于展示。
