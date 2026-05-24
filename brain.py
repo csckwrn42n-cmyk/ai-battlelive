@@ -65,7 +65,7 @@ def write_script(script):
 def aggregate_danmu(danmu_list):
     """将弹幕聚合成关键词，传给DeepSeek"""
     if not danmu_list:
-        return {}
+        return {"role_mentions": [], "action_trend": [], "target_mentions": [], "raw_count": 0}
     
     # 统计角色被提及次数
     role_mentions = {k: 0 for k in players.keys()}
@@ -341,6 +341,52 @@ def main():
                     print(f"  📋 {log}")
             else:
                 print("⚠️ 剧本生成失败")
+            
+            # 无论 DeepSeek 是否成功，都检查并消费命令（让指令在没有 key 时也能生效）
+            commands = load_commands()
+            if commands:
+                print(f"📋 单独处理 {len(commands)} 条用户指令")
+                for rid, cmd in commands.items():
+                    if rid not in players:
+                        continue
+                    if cmd.get('action') == 'attack' and cmd.get('target'):
+                        target = cmd['target']
+                        if target in players and players[target]['hp'] > 0:
+                            weapon_damage = {
+                                '拳头': 8, '铁管': 12, '木棍': 10, '钢管': 14, '小刀': 15,
+                                '霰弹枪': 25, '手枪': 18, '步枪': 22, '冲锋枪': 20,
+                                '砍刀': 18, '平底锅': 10, '木盾': 5
+                            }
+                            atk_weapon = players[rid].get('weapon', '拳头')
+                            base_damage = weapon_damage.get(atk_weapon, 8)
+                            damage = random.randint(int(base_damage * 0.7), int(base_damage * 1.3))
+                            players[target]['hp'] = max(0, players[target]['hp'] - damage)
+                            print(f"  💥 {rid} → {target}: -{damage}HP (武器: {atk_weapon})")
+                # 更新 game_script.json 反映血量变化
+                updated_chars = {}
+                for rid in players:
+                    updated_chars[rid] = {
+                        "action": commands.get(rid, {}).get('action', 'idle') if rid in commands else 'idle',
+                        "hp_change": 0,
+                        "dialogue": "执行用户指令中...",
+                        "new_weapon": "..."
+                    }
+                    if rid in commands and commands[rid].get('target'):
+                        updated_chars[rid]['target'] = commands[rid]['target']
+                # 也更新被攻击者的血量
+                for rid, cmd in commands.items():
+                    if cmd.get('action') == 'attack' and cmd.get('target'):
+                        t = cmd['target']
+                        if t in updated_chars:
+                            pass  # hp 已在上面的循环中更新了
+                cmd_script = {
+                    "world_event": "用户指令执行中",
+                    "characters": updated_chars,
+                    "battle_log": [f"{rid} 执行 [{c.get('action')}]" + (f" → {c.get('target')}" if c.get('target') else "") for rid, c in commands.items()]
+                }
+                write_script(cmd_script)
+                save_commands({})
+                print(f"  ✅ 指令已消费，game_script.json 已更新")
             
             last_trigger_time = time.time()
         
