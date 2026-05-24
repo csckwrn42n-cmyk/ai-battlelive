@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>弹幕大逃杀 - 像素末日生存版</title>
+    <style>
+        body {
+            background-color: #1a1a1a;
+            color: #eee;
+            font-family: 'Courier New', Courier, monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 0;
+            padding: 20px;
+        }
+        h1 { margin-top: 0; font-size: 24px; color: #ff9800; text-shadow: 2px 2px 0px #000; }
+        .container { display: flex; gap: 20px; align-items: flex-start; }
+        canvas {
+            background-color: #2c3e50;
+            border: 4px solid #555;
+            box-shadow: 0 0 15px #000;
+            image-rendering: pixelated;
+        }
+        .chat-box {
+            width: 350px;
+            height: 400px;
+            background: #111;
+            border: 2px solid #444;
+            display: flex;
+            flex-direction: column;
+        }
+        .chat-log {
+            flex-grow: 1;
+            overflow-y: auto;
+            padding: 10px;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+        .chat-input-area { display: flex; padding: 10px; border-top: 1px solid #333; background: #222; }
+        input[type="text"] {
+            flex-grow: 1; background: #000; color: #0f0; border: 1px solid #444;
+            padding: 5px; font-family: inherit; font-weight: bold;
+        }
+        button {
+            background: #ff9800; color: #000; border: none; padding: 5px 10px;
+            cursor: pointer; font-weight: bold; font-family: inherit;
+        }
+        button:hover { background: #ffb74d; }
+        .controls { margin-top: 15px; display: flex; gap: 10px; }
+        .controls button { background: #4caf50; color: white; padding: 10px 15px; }
+        .alert { color: #f44336; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <h1>☢️ 弹幕大逃杀：末日废土篇 ☢️</h1>
+    
+    <div class="container">
+        <!-- 游戏画面 -->
+        <canvas id="gameCanvas" width="550" height="400"></canvas>
+        
+        <!-- 弹幕与日志播报区 -->
+        <div class="chat-box">
+            <div class="chat-log" id="chatLog">
+                <div style="color: #0f0;">【系统】废土规则加载完毕。</div>
+                <div style="color: #aaa;">指令库：<br>1. [a打b] - 攻击目标<br>2. [a搜刮] - 寻找物资/武器<br>3. [a躲避] - 举起护盾防灾<br>小人代号：a, b, c, d, e</div>
+                <hr style="border-color:#333;">
+            </div>
+            <div class="chat-input-area">
+                <input type="text" id="chatInput" placeholder="输入指令，例: a搜刮" autocomplete="off">
+                <button onclick="sendManualChat()">发送</button>
+            </div>
+        </div>
+    </div>
+    
+    <div class="controls">
+        <button onclick="toggleBotChat()" id="botBtn">开启随机弹幕 (弹幕风暴)</button>
+        <button onclick="initGame()" style="background: #f44336;">重置游戏</button>
+    </div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+
+    // 游戏核心状态
+    let players = [];
+    let particles = [];
+    let zoneRadius = 350;
+    let gameOver = false;
+    
+    // 末日事件系统
+    let globalEventTimer = 0;
+    let currentEvent = null; // 'ACID_RAIN'
+    let eventDuration = 0;
+    
+    // 弹幕投票池
+    let votes = { a: {}, b: {}, c: {}, d: {}, e: {} };
+    let voteTimer = 0;
+    
+    const colors = { 'a': '#ff5555', 'b': '#5555ff', 'c': '#55ff55', 'd': '#ffff55', 'e': '#ff55ff' };
+
+    // 台词库
+    const quotes = {
+        attack: ["吃我一击！", "你的物资归我了！", "末日不讲武德！", "去死吧！"],
+        scavenge: ["找到好东西了！", "希望能吃...", "这是啥？", "翻垃圾ing..."],
+        hide: ["好害怕！", "我躲！", "苟住就能赢！", "看不见我..."],
+        hurt: ["啊！", "好疼！", "你完了！", "救命..."]
+    };
+
+    function initGame() {
+        const ids = ['a', 'b', 'c', 'd', 'e'];
+        players = ids.map(id => ({
+            id: id,
+            x: Math.random() * 450 + 50,
+            y: Math.random() * 300 + 50,
+            hp: 100,
+            color: colors[id],
+            target: null,          // 移动目标 (玩家或坐标)
+            actionInfo: null,      // 当前决定的动作
+            cooldown: 0,
+            shieldTime: 0,         // 躲避护盾时间
+            atkBonus: 0,           // 武器加成
+            weaponName: "",
+            bubble: { text: "", time: 0 } // 头顶气泡
+        }));
+        particles = [];
+        zoneRadius = 400;
+        gameOver = false;
+        currentEvent = null;
+        globalEventTimer = 0;
+        votes = { a: {}, b: {}, c: {}, d: {}, e: {} };
+        logChat("世界播报", "新的生还者降临废土，毒圈已开启...", "#ff9800");
+    }
+
+    function showBubble(p, type, customText = null) {
+        if (customText) {
+            p.bubble.text = customText;
+        } else {
+            let list = quotes[type];
+            p.bubble.text = list[Math.floor(Math.random() * list.length)];
+        }
+        p.bubble.time = 90; // 显示1.5秒
+    }
+
+    // 解析器升级：支持无目标指令
+    function processChat(text) {
+        text = text.toLowerCase().trim();
+        // 匹配: a打b, a攻击b, a搜刮, a躲避
+        const match = text.match(/([a-e])\s*(打|攻击|干|搜刮|躲避)(?:\s*([a-e]))?/);
+        if (match) {
+            let actor = match[1];
+            let actionText = match[2];
+            let target = match[3];
+
+            if (!isAlive(actor)) return false;
+
+            let actionKey = "";
+            if (['打', '攻击', '干'].includes(actionText)) {
+                if (!target || !isAlive(target) || actor === target) return false;
+                actionKey = `attack_${target}`;
+            } else if (actionText === '搜刮') {
+                actionKey = "scavenge";
+            } else if (actionText === '躲避') {
+                actionKey = "hide";
+            }
+
+            if (actionKey) {
+                if (!votes[actor][actionKey]) votes[actor][actionKey] = 0;
+                votes[actor][actionKey]++;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function isAlive(id) {
+        return players.find(p => p.id === id && p.hp > 0);
+    }
+
+    // 结算弹幕 (类似之前的浓度，但现在支持多种动作)
+    function resolveVotes() {
+        for (let actor in votes) {
+            let maxVotes = 0;
+            let decidedAction = null;
+            
+            for (let act in votes[actor]) {
+                if (votes[actor][act] > maxVotes) {
+                    maxVotes = votes[actor][act];
+                    decidedAction = act;
+                }
+            }
+            
+            let p = players.find(x => x.id === actor);
+            if (p && p.hp > 0 && decidedAction) {
+                if (decidedAction.startsWith('attack_')) {
+                    let targetId = decidedAction.split('_')[1];
+                    p.actionInfo = { type: 'attack', targetId: targetId };
+                } else if (decidedAction === 'scavenge') {
+                    p.actionInfo = { type: 'scavenge' };
+                } else if (decidedAction === 'hide') {
+                    p.actionInfo = { type: 'hide' };
+                }
+            }
+        }
+        votes = { a: {}, b: {}, c: {}, d: {}, e: {} };
+    }
+
+    // 随机搜刮掉落池
+    function rollLoot(p) {
+        const rand = Math.random();
+        if (rand < 0.4) {
+            p.hp = Math.min(100, p.hp + 20);
+            showBubble(p, 'scavenge', "吃了个过期罐头！HP+20");
+            logChat("拾荒", `${p.id.toUpperCase()} 找到了食物，恢复了体力。`, p.color);
+        } else if (rand < 0.7) {
+            p.atkBonus = 10;
+            p.weaponName = "铁管";
+            showBubble(p, 'scavenge', "捡到铁管！攻击↑");
+            logChat("拾荒", `${p.id.toUpperCase()} 装备了生锈的铁管！`, p.color);
+        } else if (rand < 0.85) {
+            p.atkBonus = 25;
+            p.weaponName = "霰弹枪";
+            showBubble(p, 'scavenge', "哇！霰弹枪！");
+            logChat("拾荒", `⚠️ ${p.id.toUpperCase()} 找到了霰弹枪，极度危险！`, "#f44336");
+        } else {
+            showBubble(p, 'scavenge', "只有一堆废纸...");
+        }
+    }
+
+    // 主更新逻辑
+    function update() {
+        if (gameOver) return;
+
+        // 缩圈
+        if (zoneRadius > 50) zoneRadius -= 0.03;
+
+        let alivePlayers = players.filter(p => p.hp > 0);
+        if (alivePlayers.length <= 1) {
+            gameOver = true;
+            let winner = alivePlayers.length === 1 ? alivePlayers[0].id.toUpperCase() : "无人";
+            logChat("播报", `比赛结束！${winner} 活过了末日！`, "#ffeb3b");
+            return;
+        }
+
+        // 全局灾害系统：酸雨
+        globalEventTimer++;
+        if (globalEventTimer > 600 && currentEvent === null) { // 每10秒左右可能下雨
+            if (Math.random() > 0.3) {
+                currentEvent = 'ACID_RAIN';
+                eventDuration = 180; // 下雨3秒
+                logChat("⚠️ 紧急灾害", "辐射酸雨降临！没有【躲避】的人将持续受到伤害！", "#ff5555");
+            }
+            globalEventTimer = 0;
+        }
+
+        if (currentEvent === 'ACID_RAIN') {
+            eventDuration--;
+            if (eventDuration <= 0) {
+                currentEvent = null;
+                logChat("世界", "天空放晴，酸雨停了。", "#aaa");
+            }
+        }
+
+        // 弹幕结算
+        voteTimer++;
+        if (voteTimer > 100) {
+            resolveVotes();
+            voteTimer = 0;
+        }
+
+        alivePlayers.forEach(p => {
+            if (p.cooldown > 0) p.cooldown--;
+            if (p.shieldTime > 0) p.shieldTime--;
+
+            // 毒圈扣血
+            let distFromCenter = Math.hypot(p.x - 275, p.y - 200);
+            if (distFromCenter > zoneRadius) p.hp -= 0.15;
+
+            // 酸雨扣血
+            if (currentEvent === 'ACID_RAIN' && p.shieldTime <= 0) {
+                p.hp -= 0.2; // 无护盾被雨淋
+            }
+
+            // 执行弹幕指派的动作
+            if (p.actionInfo) {
+                if (p.actionInfo.type === 'hide') {
+                    p.shieldTime = 150; // 获得2.5秒护盾
+                    p.cooldown = 60;
+                    showBubble(p, 'hide');
+                    p.actionInfo = null; // 动作完成
+                } 
+                else if (p.actionInfo.type === 'scavenge') {
+                    rollLoot(p);
+                    p.cooldown = 60;
+                    p.actionInfo = null;
+                }
+                else if (p.actionInfo.type === 'attack') {
+                    let target = players.find(t => t.id === p.actionInfo.targetId);
+                    if (target && target.hp > 0) {
+                        let dx = target.x - p.x;
+                        let dy = target.y - p.y;
+                        let dist = Math.hypot(dx, dy);
+
+                        if (dist > 30) { // 走向目标
+                            p.x += (dx / dist) * 1.8;
+                            p.y += (dy / dist) * 1.8;
+                        } else if (p.cooldown <= 0) { // 开打
+                            let dmg = 15 + p.atkBonus; // 基础伤害+武器
+                            target.hp -= dmg;
+                            p.cooldown = 80; 
+                            
+                            showBubble(p, 'attack');
+                            showBubble(target, 'hurt');
+                            createParticles(target.x, target.y, p.color);
+                            
+                            let wpnStr = p.weaponName ? `用${p.weaponName}` : "徒手";
+                            logChat("战斗", `${p.id.toUpperCase()} ${wpnStr}痛击了 ${target.id.toUpperCase()} (-${dmg})!`, p.color);
+                            
+                            // 击退
+                            target.x += (dx / dist) * 20;
+                            target.y += (dy / dist) * 20;
+                            
+                            p.actionInfo = null; // 砍完一刀发呆机制
+                        }
+                    } else {
+                        p.actionInfo = null; // 目标死了，清除动作
+                    }
+                }
+            } else {
+                // 发呆 / 随机微小游走
+                p.x += (Math.random() - 0.5) * 0.8;
+                p.y += (Math.random() - 0.5) * 0.8;
+                p.x = Math.max(10, Math.min(540, p.x));
+                p.y = Math.max(10, Math.min(390, p.y));
+            }
+        });
+
+        // 粒子更新
+        particles.forEach((pt, i) => {
+            pt.x += pt.vx; pt.y += pt.vy; pt.life--;
+            if (pt.life <= 0) particles.splice(i, 1);
+        });
+    }
+
+    function draw() {
+        // 背景
+        ctx.fillStyle = '#2c3e50';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // 毒圈
+        ctx.fillStyle = 'rgba(100, 0, 0, 0.4)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.globalCompositeOperation = 'destination-out';
+        ctx.beginPath();
+        ctx.arc(275, 200, zoneRadius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalCompositeOperation = 'source-over';
+        
+        ctx.beginPath();
+        ctx.arc(275, 200, zoneRadius, 0, Math.PI * 2);
+        ctx.strokeStyle = '#ff3333';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // 玩家
+        players.forEach(p => {
+            if (p.hp <= 0) return;
+
+            // 如果有护盾（躲避状态），画个保护罩
+            if (p.shieldTime > 0) {
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 18, 0, Math.PI*2);
+                ctx.fillStyle = 'rgba(100, 255, 255, 0.3)';
+                ctx.fill();
+                ctx.strokeStyle = '#0ff';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+            }
+
+            // 身体
+            ctx.fillStyle = p.color;
+            ctx.fillRect(p.x - 10, p.y - 10, 20, 20);
+            
+            // 武器指示器 (如果拿到武器，加个小点)
+            if (p.atkBonus > 0) {
+                ctx.fillStyle = '#ffeb3b';
+                ctx.fillRect(p.x + 8, p.y - 10, 4, 12);
+            }
+
+            // 眼睛
+            ctx.fillStyle = '#fff';
+            let eyeX = p.actionInfo && p.actionInfo.type === 'attack' ? 4 : 0;
+            ctx.fillRect(p.x + eyeX, p.y - 6, 4, 4);
+            ctx.fillRect(p.x + eyeX, p.y + 2, 4, 4);
+
+            // 血条
+            ctx.fillStyle = '#000';
+            ctx.fillRect(p.x - 12, p.y - 20, 24, 5);
+            ctx.fillStyle = p.hp > 40 ? '#0f0' : '#f00';
+            ctx.fillRect(p.x - 11, p.y - 19, Math.max(0, 22 * (p.hp / 100)), 3);
+            
+            // 名字
+            ctx.fillStyle = '#fff';
+            ctx.font = '10px Courier';
+            ctx.fillText(p.id.toUpperCase(), p.x - 5, p.y - 23);
+
+            // 💬 文字气泡
+            if (p.bubble.time > 0) {
+                ctx.font = '12px "Microsoft YaHei", sans-serif';
+                let txtW = ctx.measureText(p.bubble.text).width;
+                ctx.fillStyle = 'rgba(255,255,255,0.9)';
+                ctx.fillRect(p.x - txtW/2 - 4, p.y - 45, txtW + 8, 18);
+                ctx.fillStyle = '#000';
+                ctx.fillText(p.bubble.text, p.x - txtW/2, p.y - 32);
+                
+                // 气泡小尾巴
+                ctx.beginPath();
+                ctx.moveTo(p.x - 4, p.y - 27);
+                ctx.lineTo(p.x + 4, p.y - 27);
+                ctx.lineTo(p.x, p.y - 22);
+                ctx.fillStyle = 'rgba(255,255,255,0.9)';
+                ctx.fill();
+                
+                p.bubble.time--;
+            }
+        });
+
+        // 粒子(攻击特效)
+        particles.forEach(pt => {
+            ctx.fillStyle = pt.color;
+            ctx.globalAlpha = pt.life / 20;
+            ctx.fillRect(pt.x, pt.y, 4, 4);
+            ctx.globalAlpha = 1;
+        });
+
+        // 酸雨天气特效
+        if (currentEvent === 'ACID_RAIN') {
+            ctx.fillStyle = 'rgba(100, 255, 100, 0.4)'; // 绿色酸雨
+            for(let i=0; i<30; i++) {
+                let rx = Math.random() * canvas.width;
+                let ry = Math.random() * canvas.height;
+                ctx.fillRect(rx, ry, 1, Math.random()*20+10);
+            }
+        }
+    }
+
+    function loop() {
+        update(); draw(); requestAnimationFrame(loop);
+    }
+
+    function createParticles(x, y, color) {
+        for (let i = 0; i < 12; i++) {
+            particles.push({
+                x: x, y: y,
+                vx: (Math.random() - 0.5) * 10, vy: (Math.random() - 0.5) * 10,
+                life: 20, color: color
+            });
+        }
+    }
+
+    function logChat(sender, message, color = "#fff") {
+        const log = document.getElementById('chatLog');
+        const div = document.createElement('div');
+        div.style.marginBottom = "4px";
+        div.innerHTML = `<span style="color:${color}">[${sender}]</span> ${message}`;
+        log.appendChild(div);
+        log.scrollTop = log.scrollHeight;
+    }
+
+    function sendManualChat() {
+        const input = document.getElementById('chatInput');
+        const text = input.value;
+        if (!text) return;
+        
+        logChat("你", text, "#ccc");
+        let parsed = processChat(text);
+        if (!parsed) logChat("系统", "无效。试: a搜刮, a躲避, a打b", "#888");
+        input.value = ''; input.focus();
+    }
+    
+    document.getElementById('chatInput').addEventListener('keypress', e => {
+        if (e.key === 'Enter') sendManualChat();
+    });
+
+    let botInterval = null;
+    function toggleBotChat() {
+        const btn = document.getElementById('botBtn');
+        if (botInterval) {
+            clearInterval(botInterval); botInterval = null;
+            btn.innerText = "开启随机弹幕 (弹幕风暴)"; btn.style.background = "#4caf50";
+        } else {
+            btn.innerText = "停止弹幕风暴"; btn.style.background = "#f44336";
+            
+            botInterval = setInterval(() => {
+                if (gameOver) return;
+                const alive = players.filter(p => p.hp > 0).map(p => p.id);
+                if (alive.length < 1) return;
+                
+                let a = alive[Math.floor(Math.random() * alive.length)];
+                let rand = Math.random();
+                let txt = "";
+                
+                if (rand < 0.3) {
+                    txt = `${a}搜刮`;
+                } else if (rand < 0.5) {
+                    txt = `${a}躲避`;
+                } else {
+                    let b = alive[Math.floor(Math.random() * alive.length)];
+                    if (a !== b) txt = `${a}打${b}`;
+                }
+                
+                if(txt) {
+                    logChat(`观众${Math.floor(Math.random()*999)}`, txt, "#888");
+                    processChat(txt);
+                }
+            }, 600); // 稍微放慢一点机器人速度，让你看清气泡
+        }
+    }
+
+    initGame(); loop();
+</script>
+</body>
+</html>
