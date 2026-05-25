@@ -77,7 +77,7 @@
             <input id="commandInput" class="command-input" placeholder="示例：A attack D 或 B hide" autocomplete="off" />
             <button id="sendCommandBtn" class="command-button" type="button">发送</button>
         </div>
-        <div class="command-hint">格式：角色ID+动作+[目标]，如「A attack D」「A 打 B」「C躲」中英文都支持</div>
+        <div class="command-hint">输入指令驱动剧情：A打B / C躲 / D搜刮 / E救A / B防御  中英文都支持</div>
         <div class="log-title">当前待执行指令</div>
         <div class="pending-commands" id="pendingCommands">暂无待执行指令</div>
     </div>
@@ -268,9 +268,18 @@
         }
         lastScriptSig = sig;
 
-        if (script.world_event) {
+        if (script.narrative) {
+            // 指令驱动的新叙事文本
+            document.getElementById('worldEvent').innerText = script.narrative;
+            appendHistoryItems([`📖 ${script.narrative}`]);
+        } else if (script.world_event) {
             document.getElementById('worldEvent').innerText = script.world_event;
-            appendHistoryItems([`🌍 全局大事件：${script.world_event}`]);
+            if (script.idle) {
+                // 待机状态不追加到历史日志，避免刷屏
+                // 只更新世界事件文本
+            } else {
+                appendHistoryItems([`🌍 ${script.world_event}`]);
+            }
         }
 
         const chars = script.characters;
