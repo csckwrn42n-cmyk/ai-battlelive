@@ -66,12 +66,19 @@ IDLE_BUBBLES = {
     "E": ["按计划行事", "警戒中", "物资优先", "保持队形", "……没问题"],
 }
 
-# ===== 武器伤害表 =====
+# ===== 武器系统 =====
+ALL_WEAPONS = ["铁管", "小刀", "手枪", "霰弹枪", "砍刀", "平底锅", "木棍", "钢管", "冲锋枪", "步枪"]
+
 WEAPON_DAMAGE = {
     "拳头": 8, "铁管": 12, "木棍": 10, "钢管": 14, "小刀": 15,
     "霰弹枪": 25, "手枪": 18, "步枪": 22, "冲锋枪": 20,
     "砍刀": 18, "平底锅": 10, "木盾": 5,
 }
+
+# 地面上的武器（可拾取）
+ground_weapons = []
+LAST_DROP_TIME = time.time()
+DROP_INTERVAL = 120  # 每2分钟自动掉落一把武器
 
 # ===== JSON 读写 =====
 def load_json(path):
@@ -121,18 +128,71 @@ def apply_command(cmd):
         return "\n".join(narrative_parts)
 
     elif action == "scavenge":
-        # 搜刮：可能获得武器或回血
-        found_weapons = ["铁管", "小刀", "手枪", "霰弹枪", "砍刀", "平底锅"]
-        if random.random() < 0.4:
-            new_w = random.choice(found_weapons)
+        global ground_weapons
+        narrative_parts.append(f"{rid} 在废墟中翻找...")
+        picked_up = False
+        if ground_weapons:
+            new_w = ground_weapons.pop(0)
+            old_w = p.get("weapon", "拳头")
             p["weapon"] = new_w
-            narrative_parts.append(f"{rid} 搜刮到了 {new_w}！")
-        if random.random() < 0.2:
+            if old_w != "拳头":
+                ground_weapons.append(old_w)
+                narrative_parts.append(f"{rid} 捡到了 {new_w}，把 {old_w} 丢在了地上！")
+            else:
+                narrative_parts.append(f"{rid} 捡到了 {new_w}！")
+            picked_up = True
+        if not picked_up and random.random() < 0.3:
+            new_w = random.choice(ALL_WEAPONS)
+            old_w = p.get("weapon", "拳头")
+            p["weapon"] = new_w
+            if old_w != "拳头":
+                ground_weapons.append(old_w)
+                narrative_parts.append(f"{rid} 从角落翻出了 {new_w}，顺手扔掉了 {old_w}！")
+            else:
+                narrative_parts.append(f"{rid} 从角落翻出了 {new_w}！")
+            picked_up = True
+        if random.random() < 0.15:
             heal = random.randint(5, 15)
             p["hp"] = min(100, p["hp"] + heal)
             narrative_parts.append(f"{rid} 找到了急救物资，回复了 {heal} HP。")
-        if not narrative_parts:
+        if not picked_up:
             narrative_parts.append(f"{rid} 搜了一圈，没什么收获。")
+        return "\n".join(narrative_parts)
+
+    elif action == "steal" and target and target in players_status:
+        t = players_status[target]
+        if t["hp"] <= 0:
+            if t.get("weapon") and t["weapon"] != "拳头":
+                old_w = p.get("weapon", "拳头")
+                p["weapon"] = t["weapon"]
+                t["weapon"] = "拳头"
+                if old_w != "拳头":
+                    ground_weapons.append(old_w)
+                    narrative_parts.append(f"{rid} 从 {target} 的尸体上拿走了 {p['weapon']}，丢掉了 {old_w}。")
+                else:
+                    narrative_parts.append(f"{rid} 从 {target} 的尸体上拿走了 {p['weapon']}。")
+            else:
+                narrative_parts.append(f"{target} 身上什么都没有。")
+        else:
+            if t.get("weapon") and t["weapon"] != "拳头":
+                if random.random() < 0.6:
+                    old_w = p.get("weapon", "拳头")
+                    p["weapon"] = t["weapon"]
+                    t["weapon"] = "拳头"
+                    if old_w != "拳头":
+                        ground_weapons.append(old_w)
+                        narrative_parts.append(f"{rid} 从 {target} 手中抢走了 {p['weapon']}，丢掉了自己的 {old_w}！")
+                    else:
+                        narrative_parts.append(f"{rid} 从 {target} 手中抢走了 {p['weapon']}！")
+                else:
+                    narrative_parts.append(f"{rid} 想抢 {target} 的武器，但被躲开了。")
+                    t_weapon = t.get("weapon", "拳头")
+                    base_damage = WEAPON_DAMAGE.get(t_weapon, 8)
+                    damage = random.randint(int(base_damage * 0.3), int(base_damage * 0.7))
+                    p["hp"] = max(0, p["hp"] - damage)
+                    narrative_parts.append(f"{target} 反击了 {rid}，造成 {damage} 点伤害！")
+            else:
+                narrative_parts.append(f"{target} 手上没武器，没什么好抢的。")
         return "\n".join(narrative_parts)
 
     elif action == "hide":
@@ -165,7 +225,7 @@ EVENT_INTERVAL = 900  # 15分钟
 
 def build_idle_script():
     """无指令时写入待机状态，角色冒气泡+随机小动作"""
-    global LAST_EVENT_TIME
+    global LAST_EVENT_TIME, LAST_DROP_TIME, ground_weapons
 
     chars = {}
     for rid, p in players_status.items():
@@ -194,12 +254,25 @@ def build_idle_script():
             "夜幕降临，温度骤降。",
         ]
         world_event = random.choice(world_events)
+        # 每次世界事件有60%概率掉落武器
+        if random.random() < 0.6:
+            dropped = random.choice(ALL_WEAPONS)
+            ground_weapons.append(dropped)
+            world_event += f" [地上有一把 {dropped}]"
         LAST_EVENT_TIME = now
+
+    # 每2分钟自动掉落一把武器
+    if now - LAST_DROP_TIME >= DROP_INTERVAL:
+        dropped = random.choice(ALL_WEAPONS)
+        ground_weapons.append(dropped)
+        world_event = f"一阵风吹过，地上多了一把 {dropped}。"
+        LAST_DROP_TIME = now
 
     script = {
         "world_event": world_event,
         "characters": chars,
         "idle": True,
+        "ground_weapons": ground_weapons[:],
     }
     save_json(SCRIPT_PATH, script)
 
@@ -309,7 +382,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.path.startswith("/commands"):
             self._json(200, load_json(COMMANDS_PATH))
         elif self.path.startswith("/status"):
-            self._json(200, {"players": players_status})
+            self._json(200, {"players": players_status, "ground_weapons": ground_weapons})
         else:
             self.send_response(404)
             self.end_headers()
