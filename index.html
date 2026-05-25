@@ -88,11 +88,11 @@
 
     // 固定的 5 个 MBTI 角色状态
     let players = {
-        "A": { id: "A", name: "ESTP", x: 120, y: 150, hp: 100, color: "#ff5555", bubble: "", bTime: 0, targetX: 120, targetY: 150, weapon: "拳头" },
-        "B": { id: "B", name: "INFP", x: 220, y: 250, hp: 100, color: "#5555ff", bubble: "", bTime: 0, targetX: 220, targetY: 250, weapon: "拳头" },
-        "C": { id: "C", name: "INTJ", x: 350, y: 120, hp: 100, color: "#55ff55", bubble: "", bTime: 0, targetX: 350, targetY: 120, weapon: "拳头" },
-        "D": { id: "D", name: "ENFP", x: 420, y: 280, hp: 100, color: "#ffff55", bubble: "", bTime: 0, targetX: 420, targetY: 280, weapon: "拳头" },
-        "E": { id: "E", name: "ISTJ", x: 270, y: 180, hp: 100, color: "#ff55ff", bubble: "", bTime: 0, targetX: 270, targetY: 180, weapon: "拳头" }
+        "A": { id: "A", name: "ESTP", x: 120, y: 150, hp: 100, color: "#ff5555", bubble: "", bTime: 0, targetX: 120, targetY: 150, weapon: "拳头", action: "idle", animFrame: 0, scale: 1, flash: 0 },
+        "B": { id: "B", name: "INFP", x: 220, y: 250, hp: 100, color: "#5555ff", bubble: "", bTime: 0, targetX: 220, targetY: 250, weapon: "拳头", action: "idle", animFrame: 0, scale: 1, flash: 0 },
+        "C": { id: "C", name: "INTJ", x: 350, y: 120, hp: 100, color: "#55ff55", bubble: "", bTime: 0, targetX: 350, targetY: 120, weapon: "拳头", action: "idle", animFrame: 0, scale: 1, flash: 0 },
+        "D": { id: "D", name: "ENFP", x: 420, y: 280, hp: 100, color: "#ffff55", bubble: "", bTime: 0, targetX: 420, targetY: 280, weapon: "拳头", action: "idle", animFrame: 0, scale: 1, flash: 0 },
+        "E": { id: "E", name: "ISTJ", x: 270, y: 180, hp: 100, color: "#ff55ff", bubble: "", bTime: 0, targetX: 270, targetY: 180, weapon: "拳头", action: "idle", animFrame: 0, scale: 1, flash: 0 }
     };
     
     let particles = [];
@@ -292,8 +292,17 @@
             let data = applyCommandOverride(chars[id], id);
             let previousHp = p.hp;
 
+            // 记录动作用于动画
+            if (data.action) {
+                p.action = data.action;
+                p.animFrame = 0;
+            }
+            // 扣血时闪白
             if (data.hp_change !== undefined) {
                 p.hp = Math.max(0, p.hp + data.hp_change);
+                if (data.hp_change < 0) {
+                    p.flash = 10;  // 闪白持续帧数
+                }
             }
             if (data.new_weapon && data.new_weapon !== '无' && data.new_weapon !== '不变') {
                 p.weapon = data.new_weapon;
@@ -397,8 +406,56 @@
         for (let id in players) {
             let p = players[id];
             if (p.hp <= 0) continue;
+            
+            // 移动
             p.x += (p.targetX - p.x) * 0.05;
             p.y += (p.targetY - p.y) * 0.05;
+            
+            // 动画帧计数
+            p.animFrame++;
+            
+            // 闪白衰减
+            if (p.flash > 0) p.flash--;
+            
+            // 根据动作做特殊动画
+            switch (p.action) {
+                case 'attack':
+                    // 攻击时向前突进再回弹
+                    if (p.animFrame < 10) {
+                        p.scale = 1 + 0.15 * Math.sin(p.animFrame * 0.5);
+                    } else {
+                        p.scale = 1;
+                        if (p.animFrame > 30) p.action = 'idle';
+                    }
+                    break;
+                case 'hurt':
+                    p.scale = 1 + 0.1 * Math.sin(p.animFrame * 0.8);
+                    if (p.animFrame > 15) {
+                        p.action = 'idle';
+                        p.scale = 1;
+                    }
+                    break;
+                case 'run':
+                    // 跑动时身体前倾抖动
+                    p.scale = 1 + 0.05 * Math.sin(p.animFrame * 0.3);
+                    break;
+                case 'hide':
+                    // 蹲下缩小
+                    p.scale = Math.max(0.6, 1 - p.animFrame * 0.02);
+                    break;
+                case 'scavenge':
+                    // 弯腰搜索，上下晃动
+                    p.scale = 1 + 0.08 * Math.sin(p.animFrame * 0.15);
+                    break;
+                case 'defend':
+                    // 防御姿态，轻微缩小
+                    p.scale = 0.85 + 0.03 * Math.sin(p.animFrame * 0.1);
+                    break;
+                default:
+                    // idle: 呼吸浮动
+                    p.scale = 1 + 0.04 * Math.sin(p.animFrame * 0.03);
+                    break;
+            }
         }
         for (let i = particles.length - 1; i >= 0; i--) {
             let pt = particles[i];
@@ -411,36 +468,210 @@
         ctx.fillStyle = '#2c3e50';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+        // 绘制地面网格
+        ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+        ctx.lineWidth = 1;
+        for (let i = 0; i < canvas.width; i += 40) {
+            ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, canvas.height); ctx.stroke();
+        }
+        for (let i = 0; i < canvas.height; i += 40) {
+            ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(canvas.width, i); ctx.stroke();
+        }
+
         for (let id in players) {
             let p = players[id];
+            let s = p.scale || 1;
+            let cx = p.x, cy = p.y;
+
             if (p.hp <= 0) {
+                // 死亡：画一个倒下的X
+                ctx.save();
+                ctx.translate(cx, cy);
+                ctx.strokeStyle = '#7f8c8d';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(-10, -8); ctx.lineTo(10, 8);
+                ctx.moveTo(10, -8); ctx.lineTo(-10, 8);
+                ctx.stroke();
+                ctx.restore();
                 ctx.fillStyle = '#7f8c8d';
-                ctx.fillRect(p.x - 2, p.y - 10, 4, 16);
-                ctx.fillRect(p.x - 7, p.y - 5, 14, 4);
+                ctx.font = '10px Courier';
+                ctx.fillText(p.name, cx - 8, cy - 15);
                 continue;
             }
-            ctx.fillStyle = p.color;
-            ctx.fillRect(p.x - 12, p.y - 12, 24, 24);
+
+            ctx.save();
+            ctx.translate(cx, cy);
+            ctx.scale(s, s);
+
+            // 闪白效果
+            if (p.flash > 0) {
+                ctx.globalAlpha = 0.6 + 0.4 * (p.flash / 10);
+            }
+
+            const w = 20, h = 20;
+            const hw = w / 2, hh = h / 2;
+
+            // 根据动作画不同形状
+            switch (p.action) {
+                case 'attack':
+                    // 攻击：菱形 + 突刺
+                    ctx.fillStyle = p.color;
+                    ctx.beginPath();
+                    ctx.moveTo(0, -hh);
+                    ctx.lineTo(hw + 3, 0);
+                    ctx.lineTo(0, hh);
+                    ctx.lineTo(-hw - 3, 0);
+                    ctx.closePath();
+                    ctx.fill();
+                    // 拳头
+                    ctx.fillStyle = '#fff';
+                    ctx.beginPath();
+                    ctx.arc(hw + 5, 0, 4, 0, Math.PI * 2);
+                    ctx.fill();
+                    break;
+
+                case 'defend':
+                    // 防御：圆角方框 + 盾牌
+                    ctx.fillStyle = p.color;
+                    roundRect(ctx, -hw, -hh, w, h, 5);
+                    ctx.fill();
+                    ctx.strokeStyle = '#fff';
+                    ctx.lineWidth = 2;
+                    roundRect(ctx, -hw - 3, -hh - 3, w + 6, h + 6, 6);
+                    ctx.stroke();
+                    break;
+
+                case 'hide':
+                    // 隐藏：半透明 + 蹲下形状
+                    ctx.globalAlpha = 0.5;
+                    ctx.fillStyle = p.color;
+                    ctx.beginPath();
+                    ctx.ellipse(0, 3, hw, hh * 0.7, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.globalAlpha = 1;
+                    break;
+
+                case 'run':
+                    // 跑步：倾斜的动态方块
+                    ctx.fillStyle = p.color;
+                    ctx.save();
+                    ctx.rotate(0.15 * Math.sin(p.animFrame * 0.2));
+                    ctx.fillRect(-hw + 2, -hh, w - 4, h);
+                    ctx.restore();
+                    // 脚
+                    ctx.fillStyle = '#ddd';
+                    let legOffset = 3 * Math.sin(p.animFrame * 0.3);
+                    ctx.fillRect(-hw + 2, hh - 2, 5, 4 + legOffset);
+                    ctx.fillRect(hw - 7, hh - 2, 5, 4 - legOffset);
+                    break;
+
+                case 'scavenge':
+                    // 搜索：弯腰
+                    ctx.fillStyle = p.color;
+                    ctx.fillRect(-hw, -hh, w, h);
+                    // 弯腰的手臂
+                    ctx.strokeStyle = p.color;
+                    ctx.lineWidth = 3;
+                    ctx.beginPath();
+                    ctx.moveTo(0, 4);
+                    ctx.lineTo(12, 10 + 3 * Math.sin(p.animFrame * 0.1));
+                    ctx.stroke();
+                    break;
+
+                case 'hurt':
+                    // 受伤：闪白 + 颤抖
+                    ctx.fillStyle = p.flash > 0 ? '#fff' : p.color;
+                    let shakeX = (Math.random() - 0.5) * 4;
+                    let shakeY = (Math.random() - 0.5) * 4;
+                    ctx.fillRect(-hw + shakeX, -hh + shakeY, w, h);
+                    // 裂痕
+                    ctx.strokeStyle = '#f00';
+                    ctx.lineWidth = 1;
+                    ctx.beginPath();
+                    ctx.moveTo(-5, -5); ctx.lineTo(3, 3);
+                    ctx.moveTo(5, -3); ctx.lineTo(-2, 5);
+                    ctx.stroke();
+                    break;
+
+                default:
+                    // idle: 普通方块 + 呼吸动画
+                    ctx.fillStyle = p.color;
+                    let breath = 1 + 0.03 * Math.sin(p.animFrame * 0.03);
+                    ctx.save();
+                    ctx.scale(breath, 1);
+                    roundRect(ctx, -hw, -hh, w, h, 3);
+                    ctx.fill();
+                    ctx.restore();
+                    // 眼睛
+                    ctx.fillStyle = '#fff';
+                    ctx.fillRect(-5, -4, 4, 4);
+                    ctx.fillRect(3, -4, 4, 4);
+                    ctx.fillStyle = '#000';
+                    ctx.fillRect(-4, -3, 2, 2);
+                    ctx.fillRect(4, -3, 2, 2);
+                    break;
+            }
+
+            ctx.restore();
+
+            // 名字标签
             ctx.fillStyle = '#fff';
-            ctx.font = '11px Courier';
-            ctx.fillText(p.name, p.x - 12, p.y - 18);
+            ctx.font = '10px Courier';
+            ctx.textAlign = 'center';
+            ctx.fillText(p.name, cx, cy - 22);
+
+            // 血条
+            let barW = 30, barH = 4;
+            ctx.fillStyle = '#333';
+            ctx.fillRect(cx - barW / 2, cy + 14, barW, barH);
+            ctx.fillStyle = p.hp > 50 ? '#0f0' : p.hp > 25 ? '#ff0' : '#f00';
+            ctx.fillRect(cx - barW / 2, cy + 14, barW * (p.hp / 100), barH);
+
+            // 武器标签
+            if (p.weapon && p.weapon !== '拳头') {
+                ctx.fillStyle = '#aaa';
+                ctx.font = '8px Courier';
+                ctx.fillText(p.weapon, cx, cy + 26);
+            }
+
+            // 对话框
             if (p.bTime > 0 && p.bubble) {
                 ctx.font = '12px "Microsoft YaHei", sans-serif';
+                ctx.textAlign = 'center';
                 let txtW = ctx.measureText(p.bubble).width;
                 ctx.fillStyle = 'rgba(255,255,255,0.95)';
-                ctx.fillRect(p.x - txtW / 2 - 6, p.y - 52, txtW + 12, 20);
+                roundRect(ctx, cx - txtW / 2 - 6, cy - 52, txtW + 12, 22, 4);
+                ctx.fill();
                 ctx.fillStyle = '#000';
-                ctx.fillText(p.bubble, p.x - txtW / 2, p.y - 38);
+                ctx.fillText(p.bubble, cx, cy - 36);
                 p.bTime--;
             }
         }
 
+        // 粒子
         particles.forEach(pt => {
             ctx.fillStyle = pt.color;
             ctx.globalAlpha = pt.life / 20;
             ctx.fillRect(pt.x, pt.y, 4, 4);
             ctx.globalAlpha = 1;
         });
+
+        ctx.textAlign = 'start';
+    }
+
+    function roundRect(ctx, x, y, w, h, r) {
+        ctx.beginPath();
+        ctx.moveTo(x + r, y);
+        ctx.lineTo(x + w - r, y);
+        ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+        ctx.lineTo(x + w, y + h - r);
+        ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+        ctx.lineTo(x + r, y + h);
+        ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+        ctx.lineTo(x, y + r);
+        ctx.quadraticCurveTo(x, y, x + r, y);
+        ctx.closePath();
     }
 
     function createParticles(x, y, color) {

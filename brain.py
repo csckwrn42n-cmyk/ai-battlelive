@@ -16,6 +16,7 @@ import json
 import random
 from openai import OpenAI
 
+import sys; sys.stdout.reconfigure(encoding="utf-8", write_through=True)
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 COMMANDS_PATH = os.path.join(CURRENT_DIR, "commands.json")
 SCRIPT_PATH = os.path.join(CURRENT_DIR, "game_script.json")
@@ -366,11 +367,11 @@ def main():
     print("🚀 指令驱动版已启动")
     print("   有指令 → 调DS生成剧情")
     print("   无指令 → 角色自动待机（预设气泡，不调DS）")
-    start_http()
-
-    # 初始剧本
+    # 先写初始剧本，再启动HTTP服务（确保页面加载时文件已存在）
     init_chars = {r: {"dialogue": "待命中…", "hp_change": 0, "action": "idle", "new_weapon": "..."} for r in players_status}
     save_json(SCRIPT_PATH, {"world_event": "5个幸存者在废土上游荡。", "characters": init_chars})
+    
+    start_http()
 
     LAST_EVENT_TIME = time.time()
     last_idle_time = time.time()
